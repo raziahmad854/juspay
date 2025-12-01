@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useRef } from "react";
 import CatSprite from "./CatSprite";
 
 export default function PreviewArea({
@@ -12,78 +12,126 @@ export default function PreviewArea({
   setIsPlaying,
   resetSprites,
 }) {
+  // Which sprites are currently animating
   const animationRef = useRef({});
-  const originalActionsRef = useRef({}); // Store original actions before play
-  const spriteStatesRef = useRef({}); // Store current sprite positions during animation
+  // Flattened (runtime) actions after handling repeat
+  const runtimeActionsRef = useRef({});
+  // Live sprite state, for collision checking and debug
+  const spriteStatesRef = useRef({});
+  // Track which pairs have already swapped once
+  const swappedPairsRef = useRef(new Set());
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const checkCollision = (state1, state2) => {
-    const distance = Math.sqrt(
-      Math.pow(state1.x - state2.x, 2) + Math.pow(state1.y - state2.y, 2)
-    );
-    console.log(`Distance between ${state1.name} at (${state1.x.toFixed(0)}, ${state1.y.toFixed(0)}) and ${state2.name} at (${state2.x.toFixed(0)}, ${state2.y.toFixed(0)}): ${distance.toFixed(2)}`);
-    return distance < 80; // Collision threshold - two sprites touching
+    const dx = state1.x - state2.x;
+    const dy = state1.y - state2.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    // You can keep this log if you want:
+    // console.log(`Distance ${state1.name} - ${state2.name}: ${distance.toFixed(2)}`);
+    return distance < 80; // Threshold for "touching"
   };
 
   const executeActionWithState = async (spriteState, action) => {
+    const safeRotation =
+      typeof spriteState.rotation === "number" ? spriteState.rotation : 0;
+
     switch (action.type) {
-      case "move":
-        const rad = (spriteState.rotation * Math.PI) / 180;
-        const newX = spriteState.x + action.steps * Math.cos(rad);
-        const newY = spriteState.y + action.steps * Math.sin(rad);
+      case "goto": {
+        const x = Number(action.x ?? 0);
+        const y = Number(action.y ?? 0);
+
+        updateSprite(spriteState.id, { x, y });
+        spriteState.x = x;
+        spriteState.y = y;
+        spriteStatesRef.current[spriteState.id] = { ...spriteState };
+
+        await sleep(100);
+        break;
+      }
+
+      case "move": {
+        const steps = Number(
+          action.steps ??
+            action.value ??
+            action.distance ??
+            0
+        );
+        const rad = (safeRotation * Math.PI) / 180;
+        const newX = spriteState.x + steps * Math.cos(rad);
+        const newY = spriteState.y + steps * Math.sin(rad);
+
         updateSprite(spriteState.id, { x: newX, y: newY });
         spriteState.x = newX;
         spriteState.y = newY;
         spriteStatesRef.current[spriteState.id] = { ...spriteState };
+
         await sleep(100);
         break;
+      }
 
-      case "turn_clockwise":
-        const newRotationCW = spriteState.rotation + action.degrees;
-        updateSprite(spriteState.id, { rotation: newRotationCW });
-        spriteState.rotation = newRotationCW;
+      case "turn_clockwise": {
+        const degrees = Number(action.degrees ?? 0);
+        const newRotation = safeRotation + degrees;
+
+        updateSprite(spriteState.id, { rotation: newRotation });
+        spriteState.rotation = newRotation;
         spriteStatesRef.current[spriteState.id] = { ...spriteState };
+
         await sleep(100);
         break;
+      }
 
-      case "turn_anticlockwise":
-        const newRotationCCW = spriteState.rotation - action.degrees;
-        updateSprite(spriteState.id, { rotation: newRotationCCW });
-        spriteState.rotation = newRotationCCW;
+      case "turn_anticlockwise": {
+        const degrees = Number(action.degrees ?? 0);
+        const newRotation = safeRotation - degrees;
+
+        updateSprite(spriteState.id, { rotation: newRotation });
+        spriteState.rotation = newRotation;
         spriteStatesRef.current[spriteState.id] = { ...spriteState };
+
         await sleep(100);
         break;
+      }
 
-      case "goto":
-        updateSprite(spriteState.id, { x: action.x, y: action.y });
-        spriteState.x = action.x;
-        spriteState.y = action.y;
-        spriteStatesRef.current[spriteState.id] = { ...spriteState };
-        await sleep(100);
-        break;
-
-      case "say":
-        updateSprite(spriteState.id, { message: action.message, messageType: "say" });
+      case "say": {
+        updateSprite(spriteState.id, {
+          message: action.message,
+          messageType: "say",
+        });
         spriteState.message = action.message;
         spriteState.messageType = "say";
-        await sleep(action.duration * 1000);
+        spriteStatesRef.current[spriteState.id] = { ...spriteState };
+
+        await sleep(Number(action.duration ?? 1) * 1000);
+
         updateSprite(spriteState.id, { message: "", messageType: "" });
         spriteState.message = "";
         spriteState.messageType = "";
+        spriteStatesRef.current[spriteState.id] = { ...spriteState };
         break;
+      }
 
-      case "think":
-        updateSprite(spriteState.id, { message: action.message, messageType: "think" });
+      case "think": {
+        updateSprite(spriteState.id, {
+          message: action.message,
+          messageType: "think",
+        });
         spriteState.message = action.message;
         spriteState.messageType = "think";
-        await sleep(action.duration * 1000);
+        spriteStatesRef.current[spriteState.id] = { ...spriteState };
+
+        await sleep(Number(action.duration ?? 1) * 1000);
+
         updateSprite(spriteState.id, { message: "", messageType: "" });
         spriteState.message = "";
         spriteState.messageType = "";
+        spriteStatesRef.current[spriteState.id] = { ...spriteState };
         break;
+      }
 
       case "repeat":
+        // Handled when expanding; nothing here
         break;
 
       default:
@@ -93,119 +141,183 @@ export default function PreviewArea({
     return spriteState;
   };
 
+  /**
+   * Expand actions so repeat becomes copies of the previous non-repeat action.
+   * Example:
+   *  [goto, move, repeat(30)]
+   *  -> [goto, move, move, move, ..., move] (30 extra moves)
+   */
+  const expandActionsForRuntime = (actions) => {
+    const out = [];
+
+    for (let i = 0; i < actions.length; i++) {
+      const action = actions[i];
+
+      if (action.type === "repeat") {
+        const prev = actions[i - 1];
+        if (!prev || prev.type === "repeat") {
+          // Invalid repeat; skip
+          continue;
+        }
+
+        const times = Number(
+          action.times ??
+            action.count ??
+            action.value ??
+            0
+        );
+
+        for (let t = 0; t < times; t++) {
+          out.push({ ...prev });
+        }
+      } else {
+        out.push(action);
+      }
+    }
+
+    return out;
+  };
+
+  /**
+   * Check collisions for a given sprite against all others.
+   * On first collision between a pair, swap their runtime action arrays.
+   */
+  const checkAndHandleCollisions = (currentSpriteId) => {
+    const currentState = spriteStatesRef.current[currentSpriteId];
+    if (!currentState) return;
+
+    Object.keys(spriteStatesRef.current).forEach((otherId) => {
+      if (otherId === currentSpriteId) return;
+
+      const otherState = spriteStatesRef.current[otherId];
+      if (!otherState) return;
+
+      if (!checkCollision(currentState, otherState)) return;
+
+      const key = [currentSpriteId, otherId].sort().join("-");
+      if (swappedPairsRef.current.has(key)) return;
+
+      swappedPairsRef.current.add(key);
+
+      // Swap the runtime action lists of the two sprites
+      const temp = runtimeActionsRef.current[currentSpriteId];
+      runtimeActionsRef.current[currentSpriteId] =
+        runtimeActionsRef.current[otherId];
+      runtimeActionsRef.current[otherId] = temp;
+
+      // Optional debug:
+      // console.log(`Swapped actions between ${currentState.name} and ${otherState.name}`);
+    });
+  };
+
+  /**
+   * Execute all actions for a sprite, sequentially.
+   */
   const executeActions = async (sprite) => {
     let localSpriteState = {
       id: sprite.id,
       name: sprite.name,
       x: sprite.x,
       y: sprite.y,
-      rotation: sprite.rotation,
+      rotation:
+        typeof sprite.rotation === "number" ? sprite.rotation : 0,
       message: sprite.message,
       messageType: sprite.messageType,
     };
 
     spriteStatesRef.current[sprite.id] = { ...localSpriteState };
 
-    // Small delay to ensure all sprites initialize together
-    await sleep(10);
+    await sleep(10); // small sync delay so all sprites register
 
-    let actionIndex = 0;
-    
-    while (actionIndex < originalActionsRef.current[sprite.id].length) {
-      if (!animationRef.current[sprite.id]) break;
+    let index = 0;
 
-      const action = originalActionsRef.current[sprite.id][actionIndex];
+    while (animationRef.current[sprite.id]) {
+      const actions = runtimeActionsRef.current[sprite.id] || [];
+      if (index >= actions.length) break;
 
-      if (action.type === "repeat") {
-        for (let repeatCount = 0; repeatCount < action.times; repeatCount++) {
-          if (!animationRef.current[sprite.id]) break;
+      const action = actions[index];
 
-          for (let k = 0; k < actionIndex; k++) {
-            if (!animationRef.current[sprite.id]) break;
-            
-            const repeatAction = originalActionsRef.current[sprite.id][k];
-            localSpriteState = await executeActionWithState(localSpriteState, repeatAction);
-            checkAndHandleCollisions(sprite.id);
-          }
-        }
-      } else {
-        localSpriteState = await executeActionWithState(localSpriteState, action);
-        checkAndHandleCollisions(sprite.id);
-      }
+      // Optional logging:
+      // console.log(
+      //   `[${sprite.name}] BEFORE #${index}`,
+      //   { x: localSpriteState.x, y: localSpriteState.y, rotation: localSpriteState.rotation },
+      //   "action:",
+      //   action
+      // );
 
-      actionIndex++;
+      localSpriteState = await executeActionWithState(
+        localSpriteState,
+        action
+      );
+
+      spriteStatesRef.current[sprite.id] = { ...localSpriteState };
+      checkAndHandleCollisions(sprite.id);
+
+      // Optional logging:
+      // console.log(
+      //   `[${sprite.name}] AFTER #${index}`,
+      //   { x: localSpriteState.x, y: localSpriteState.y, rotation: localSpriteState.rotation }
+      // );
+
+      index++;
     }
 
     delete animationRef.current[sprite.id];
     delete spriteStatesRef.current[sprite.id];
   };
 
-  const checkAndHandleCollisions = (currentSpriteId) => {
-    const currentState = spriteStatesRef.current[currentSpriteId];
-    if (!currentState) return;
-
-    Object.keys(spriteStatesRef.current).forEach((otherSpriteId) => {
-      if (currentSpriteId !== otherSpriteId) {
-        const otherState = spriteStatesRef.current[otherSpriteId];
-        
-        if (checkCollision(currentState, otherState)) {
-          // Check if we haven't already swapped these sprites
-          const swapKey = [currentSpriteId, otherSpriteId].sort().join('-');
-          
-          if (!originalActionsRef.current.swappedPairs) {
-            originalActionsRef.current.swappedPairs = new Set();
-          }
-          
-          if (!originalActionsRef.current.swappedPairs.has(swapKey)) {
-            // HERO FEATURE: Swap the RUNNING actions (not the displayed ones)
-            const tempActions = [...originalActionsRef.current[currentSpriteId]];
-            originalActionsRef.current[currentSpriteId] = [...originalActionsRef.current[otherSpriteId]];
-            originalActionsRef.current[otherSpriteId] = tempActions;
-            
-            // Mark this pair as swapped
-            originalActionsRef.current.swappedPairs.add(swapKey);
-            
-            console.log(`✨ COLLISION! Swapping animations between ${currentState.name} and ${otherState.name}`);
-          }
-        }
-      }
-    });
-  };
-
+  /**
+   * Play: expand actions, then run them for each sprite.
+   */
   const handlePlay = async () => {
     setIsPlaying(true);
 
+    runtimeActionsRef.current = {};
+    spriteStatesRef.current = {};
+    swappedPairsRef.current = new Set();
+
     sprites.forEach((sprite) => {
-      originalActionsRef.current[sprite.id] = [...sprite.actions];
+      const actions = sprite.actions || [];
+      const flat = expandActionsForRuntime(actions);
+      runtimeActionsRef.current[sprite.id] = flat;
+      // Optional debug:
+      // console.log(`[${sprite.name}] runtime actions:`, flat);
     });
 
-    originalActionsRef.current.swappedPairs = new Set();
-
-    // Small delay to ensure state is synced
-    await sleep(50);
+    await sleep(30);
 
     const animations = sprites
-      .filter((sprite) => sprite.actions.length > 0)
+      .filter(
+        (s) =>
+          runtimeActionsRef.current[s.id] &&
+          runtimeActionsRef.current[s.id].length > 0
+      )
       .map((sprite) => {
         animationRef.current[sprite.id] = true;
         return executeActions(sprite);
       });
 
-    Promise.all(animations).then(() => {
+    Promise.all(animations).finally(() => {
       setIsPlaying(false);
     });
   };
 
+  /**
+   * Stop: cancel all animations and clear messages.
+   */
   const handleStop = () => {
     setIsPlaying(false);
-    // Cancel all running animations
+
     Object.keys(animationRef.current).forEach((key) => {
       delete animationRef.current[key];
     });
-    // Clear all messages
+
     sprites.forEach((sprite) => {
       updateSprite(sprite.id, { message: "", messageType: "" });
     });
+
+    spriteStatesRef.current = {};
+    swappedPairsRef.current = new Set();
   };
 
   return (

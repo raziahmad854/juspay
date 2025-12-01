@@ -21,47 +21,61 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
 
   const addSprite = () => {
-    const newSprite = {
-      id: `sprite-${Date.now()}`,
-      name: `Sprite ${sprites.length + 1}`,
-      x: Math.random() * 200 - 100,
-      y: Math.random() * 200 - 100,
-      rotation: 0,
-      actions: [],
-      message: "",
-      messageTimeout: null,
-    };
-    setSprites([...sprites, newSprite]);
-    setSelectedSpriteId(newSprite.id);
+    // This one is user-triggered, so stale state is less dangerous,
+    // but let's still make it safe & clean.
+    setSprites((prevSprites) => {
+      const newSprite = {
+        id: `sprite-${Date.now()}`,
+        name: `Sprite ${prevSprites.length + 1}`,
+        x: Math.random() * 200 - 100,
+        y: Math.random() * 200 - 100,
+        rotation: 0,
+        actions: [],
+        message: "",
+        messageTimeout: null,
+      };
+      // Also update selected sprite to this new one
+      setSelectedSpriteId(newSprite.id);
+      return [...prevSprites, newSprite];
+    });
   };
 
   const deleteSprite = (id) => {
-    if (sprites.length === 1) return; // Keep at least one sprite
-    setSprites(sprites.filter((s) => s.id !== id));
-    if (selectedSpriteId === id) {
-      setSelectedSpriteId(sprites[0].id);
-    }
+    setSprites((prevSprites) => {
+      if (prevSprites.length === 1) return prevSprites; // Keep at least one sprite
+
+      const filtered = prevSprites.filter((s) => s.id !== id);
+
+      if (selectedSpriteId === id && filtered.length > 0) {
+        setSelectedSpriteId(filtered[0].id);
+      }
+
+      return filtered;
+    });
   };
 
+  // IMPORTANT: functional update, used heavily during animation
   const updateSpriteActions = (spriteId, actions) => {
-    setSprites(
-      sprites.map((sprite) =>
+    setSprites((prevSprites) =>
+      prevSprites.map((sprite) =>
         sprite.id === spriteId ? { ...sprite, actions } : sprite
       )
     );
   };
 
+  // IMPORTANT: functional update, used for move/goto/turn/etc.
   const updateSprite = (spriteId, updates) => {
-    setSprites(
-      sprites.map((sprite) =>
+    setSprites((prevSprites) =>
+      prevSprites.map((sprite) =>
         sprite.id === spriteId ? { ...sprite, ...updates } : sprite
       )
     );
   };
 
+  // IMPORTANT: also make reset safe
   const resetSprites = () => {
-    setSprites(
-      sprites.map((sprite) => ({
+    setSprites((prevSprites) =>
+      prevSprites.map((sprite) => ({
         ...sprite,
         x: 0,
         y: 0,
