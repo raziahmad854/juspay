@@ -6,7 +6,8 @@ export default function MidArea({
   updateSpriteActions,
 }) {
   const selectedSprite = sprites.find((s) => s.id === selectedSpriteId);
-  const [draggedIndex, setDraggedIndex] = useState(null);
+  const [draggedIndex, setDraggedIndex] = useState(null); // root actions
+  const [draggedChild, setDraggedChild] = useState(null); // { repeatIndex, childIndex }
 
   if (!selectedSprite) {
     return (
@@ -18,10 +19,31 @@ export default function MidArea({
 
   const rootActions = selectedSprite.actions || [];
 
-  const handleDropRoot = (e) => {
+  const handleDragOver = (e) => {
     e.preventDefault();
+  };
+
+  // numeric input helper: allow empty string or number
+  const handleNumberChange = (raw, setValue) => {
+    if (raw === "") {
+      setValue("");
+      return;
+    }
+    const n = Number(raw);
+    if (Number.isNaN(n)) return;
+    setValue(n);
+  };
+
+  // ---------- ROOT-LEVEL: add new actions from Sidebar ----------
+
+  const handleRootDrop = (e) => {
+    e.preventDefault();
+
     const actionData = e.dataTransfer.getData("action");
-    if (!actionData) return;
+    if (!actionData) {
+      // ignore drops that are just reordering children etc.
+      return;
+    }
 
     const action = JSON.parse(actionData);
     const newActions = [
@@ -31,12 +53,11 @@ export default function MidArea({
     updateSpriteActions(selectedSpriteId, newActions);
   };
 
-  const handleDragOver = (e) => {
-    e.preventDefault();
-  };
+  // ---------- ROOT-LEVEL: reorder existing actions ----------
 
   const handleActionDragStart = (e, index) => {
     setDraggedIndex(index);
+    setDraggedChild(null);
     e.dataTransfer.effectAllowed = "move";
   };
 
@@ -65,34 +86,79 @@ export default function MidArea({
     updateSpriteActions(selectedSpriteId, newActions);
   };
 
-  const handleDropIntoRepeat = (e, repeatIndex) => {
+  // ---------- REPEAT CHILDREN: add / reorder / remove / update ----------
+
+  const handleChildDragStart = (e, repeatIndex, childIndex) => {
+    setDraggedChild({ repeatIndex, childIndex });
+    setDraggedIndex(null);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleChildDrop = (e, repeatIndex, dropIndex) => {
     e.preventDefault();
     e.stopPropagation();
+
     const actionData = e.dataTransfer.getData("action");
-    if (!actionData) return;
-
-    const action = JSON.parse(actionData);
-
     const newActions = [...rootActions];
     const repeatAction = { ...newActions[repeatIndex] };
-    const children = repeatAction.children || [];
+    const children = [...(repeatAction.children || [])];
 
-    repeatAction.children = [
-      ...children,
-      { ...action, id: Date.now() },
-    ];
+    // Case 1: new child from sidebar
+    if (actionData) {
+      const action = JSON.parse(actionData);
+      children.splice(dropIndex, 0, { ...action, id: Date.now() });
+      repeatAction.children = children;
+      newActions[repeatIndex] = repeatAction;
+      updateSpriteActions(selectedSpriteId, newActions);
+      return;
+    }
 
+    // Case 2: reorder existing child
+    if (!draggedChild) return;
+    const { repeatIndex: fromRepeat, childIndex: fromIndex } = draggedChild;
+    if (fromRepeat !== repeatIndex) {
+      setDraggedChild(null);
+      return;
+    }
+
+    if (fromIndex < 0 || fromIndex >= children.length) {
+      setDraggedChild(null);
+      return;
+    }
+
+    const [moved] = children.splice(fromIndex, 1);
+
+    let targetIndex = dropIndex;
+    if (fromIndex < dropIndex) {
+      targetIndex = dropIndex - 1;
+    }
+    if (targetIndex < 0) targetIndex = 0;
+    if (targetIndex > children.length) targetIndex = children.length;
+
+    children.splice(targetIndex, 0, moved);
+
+    repeatAction.children = children;
     newActions[repeatIndex] = repeatAction;
     updateSpriteActions(selectedSpriteId, newActions);
+    setDraggedChild(null);
+  };
+
+  const handleRepeatContainerDrop = (e, repeatIndex, childrenCount) => {
+    // dropping onto yellow repeat block background -> append to end
+    handleChildDrop(e, repeatIndex, childrenCount);
   };
 
   const updateChildAction = (repeatIndex, childIndex, field, value) => {
     const newActions = [...rootActions];
     const repeatAction = { ...newActions[repeatIndex] };
-    const children = repeatAction.children || [];
-    const newChildren = [...children];
-    newChildren[childIndex] = { ...newChildren[childIndex], [field]: value };
-    repeatAction.children = newChildren;
+    const children = [...(repeatAction.children || [])];
+
+    children[childIndex] = {
+      ...children[childIndex],
+      [field]: value,
+    };
+
+    repeatAction.children = children;
     newActions[repeatIndex] = repeatAction;
     updateSpriteActions(selectedSpriteId, newActions);
   };
@@ -100,26 +166,14 @@ export default function MidArea({
   const removeChildAction = (repeatIndex, childIndex) => {
     const newActions = [...rootActions];
     const repeatAction = { ...newActions[repeatIndex] };
-    const children = repeatAction.children || [];
+    const children = [...(repeatAction.children || [])];
+
     repeatAction.children = children.filter((_, i) => i !== childIndex);
     newActions[repeatIndex] = repeatAction;
     updateSpriteActions(selectedSpriteId, newActions);
   };
 
-  // Helper for number inputs: allow empty string in UI, store "" or number
-  const handleNumberChange = (raw, onChangeField, fieldName) => {
-    const val = raw;
-    if (val === "") {
-      onChangeField(fieldName, "");
-    } else {
-      const n = Number(val);
-      if (Number.isNaN(n)) {
-        // Ignore invalid intermediate values; do not update
-        return;
-      }
-      onChangeField(fieldName, n);
-    }
-  };
+  // ---------- RENDER HELPERS ----------
 
   const renderSimpleActionContent = (action, onChangeField) => {
     if (action.type === "move") {
@@ -130,7 +184,9 @@ export default function MidArea({
             type="number"
             value={action.steps ?? ""}
             onChange={(e) =>
-              handleNumberChange(e.target.value, onChangeField, "steps")
+              handleNumberChange(e.target.value, (v) =>
+                onChangeField("steps", v)
+              )
             }
             className="mx-2 w-16 text-black text-center rounded px-1"
           />
@@ -147,7 +203,9 @@ export default function MidArea({
             type="number"
             value={action.degrees ?? ""}
             onChange={(e) =>
-              handleNumberChange(e.target.value, onChangeField, "degrees")
+              handleNumberChange(e.target.value, (v) =>
+                onChangeField("degrees", v)
+              )
             }
             className="mx-2 w-16 text-black text-center rounded px-1"
           />
@@ -164,7 +222,9 @@ export default function MidArea({
             type="number"
             value={action.degrees ?? ""}
             onChange={(e) =>
-              handleNumberChange(e.target.value, onChangeField, "degrees")
+              handleNumberChange(e.target.value, (v) =>
+                onChangeField("degrees", v)
+              )
             }
             className="mx-2 w-16 text-black text-center rounded px-1"
           />
@@ -181,7 +241,9 @@ export default function MidArea({
             type="number"
             value={action.x ?? ""}
             onChange={(e) =>
-              handleNumberChange(e.target.value, onChangeField, "x")
+              handleNumberChange(e.target.value, (v) =>
+                onChangeField("x", v)
+              )
             }
             className="mx-1 w-14 text-black text-center rounded px-1"
           />
@@ -190,7 +252,9 @@ export default function MidArea({
             type="number"
             value={action.y ?? ""}
             onChange={(e) =>
-              handleNumberChange(e.target.value, onChangeField, "y")
+              handleNumberChange(e.target.value, (v) =>
+                onChangeField("y", v)
+              )
             }
             className="mx-1 w-14 text-black text-center rounded px-1"
           />
@@ -213,7 +277,9 @@ export default function MidArea({
             type="number"
             value={action.duration ?? ""}
             onChange={(e) =>
-              handleNumberChange(e.target.value, onChangeField, "duration")
+              handleNumberChange(e.target.value, (v) =>
+                onChangeField("duration", v)
+              )
             }
             className="mx-2 w-12 text-black text-center rounded px-1"
           />
@@ -237,7 +303,9 @@ export default function MidArea({
             type="number"
             value={action.duration ?? ""}
             onChange={(e) =>
-              handleNumberChange(e.target.value, onChangeField, "duration")
+              handleNumberChange(e.target.value, (v) =>
+                onChangeField("duration", v)
+              )
             }
             className="mx-2 w-12 text-black text-center rounded px-1"
           />
@@ -262,6 +330,11 @@ export default function MidArea({
     return (
       <div
         key={action.id}
+        draggable
+        onDragStart={(e) =>
+          handleChildDragStart(e, repeatIndex, childIndex)
+        }
+        onDragOver={handleDragOver}
         className={`${bgColor} text-white px-3 py-1 my-1 text-xs rounded relative`}
       >
         <button
@@ -314,9 +387,9 @@ export default function MidArea({
               type="number"
               value={action.times ?? ""}
               onChange={(e) =>
-                handleNumberChange(e.target.value, (field, value) =>
-                  updateAction(index, field, value)
-                , "times")
+                handleNumberChange(e.target.value, (v) =>
+                  updateAction(index, "times", v)
+                )
               }
               className="mx-2 w-12 text-black text-center rounded px-1"
             />
@@ -325,23 +398,46 @@ export default function MidArea({
 
           <div
             className="ml-4 mt-2 p-2 bg-yellow-600 rounded"
-            onDrop={(e) => handleDropIntoRepeat(e, index)}
             onDragOver={handleDragOver}
+            onDrop={(e) =>
+              handleRepeatContainerDrop(e, index, children.length)
+            }
           >
             {children.length === 0 ? (
               <div className="text-xs text-gray-200">
                 Drop actions here to repeat them
               </div>
             ) : (
-              children.map((child, childIndex) =>
-                renderChildAction(child, index, childIndex)
-              )
+              <>
+                {children.map((child, childIndex) => (
+                  <React.Fragment key={child.id}>
+                    {/* droppable gap above each child */}
+                    <div
+                      className="h-1"
+                      onDragOver={handleDragOver}
+                      onDrop={(e) =>
+                        handleChildDrop(e, index, childIndex)
+                      }
+                    />
+                    {renderChildAction(child, index, childIndex)}
+                  </React.Fragment>
+                ))}
+                {/* gap at the end */}
+                <div
+                  className="h-1"
+                  onDragOver={handleDragOver}
+                  onDrop={(e) =>
+                    handleChildDrop(e, index, children.length)
+                  }
+                />
+              </>
             )}
           </div>
         </div>
       );
     }
 
+    // non-repeat actions
     return (
       <div
         key={action.id}
@@ -368,11 +464,11 @@ export default function MidArea({
   return (
     <div
       className="flex-1 h-full overflow-auto p-4"
-      onDrop={handleDropRoot}
       onDragOver={handleDragOver}
+      onDrop={handleRootDrop}
     >
       <div className="mb-4 font-bold text-lg">
-        {selectedSprite?.name || "Select a sprite"}
+        {selectedSprite.name}
       </div>
 
       {rootActions.length === 0 ? (
@@ -380,7 +476,9 @@ export default function MidArea({
           Drag blocks here to create actions
         </div>
       ) : (
-        <div>{rootActions.map((action, index) => renderAction(action, index))}</div>
+        <div>
+          {rootActions.map((action, index) => renderAction(action, index))}
+        </div>
       )}
     </div>
   );
