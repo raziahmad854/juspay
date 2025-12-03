@@ -8,17 +8,14 @@ export default function PreviewArea({
   addSprite,
   deleteSprite,
   updateSprite,
+  updateSpriteActions,
   isPlaying,
   setIsPlaying,
   resetSprites,
 }) {
-  // Which sprites are currently animating
   const animationRef = useRef({});
-  // Flattened (runtime) actions after handling repeat
   const runtimeActionsRef = useRef({});
-  // Live sprite state, for collision checking and debug
   const spriteStatesRef = useRef({});
-  // Track which pairs have already swapped once
   const swappedPairsRef = useRef(new Set());
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -27,9 +24,7 @@ export default function PreviewArea({
     const dx = state1.x - state2.x;
     const dy = state1.y - state2.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
-    // You can keep this log if you want:
-    // console.log(`Distance ${state1.name} - ${state2.name}: ${distance.toFixed(2)}`);
-    return distance < 80; // Threshold for "touching"
+    return distance < 80;
   };
 
   const executeActionWithState = async (spriteState, action) => {
@@ -52,10 +47,7 @@ export default function PreviewArea({
 
       case "move": {
         const steps = Number(
-          action.steps ??
-            action.value ??
-            action.distance ??
-            0
+          action.steps ?? action.value ?? action.distance ?? 0
         );
         const rad = (safeRotation * Math.PI) / 180;
         const newX = spriteState.x + steps * Math.cos(rad);
@@ -131,7 +123,6 @@ export default function PreviewArea({
       }
 
       case "repeat":
-        // Handled when expanding; nothing here
         break;
 
       default:
@@ -141,12 +132,6 @@ export default function PreviewArea({
     return spriteState;
   };
 
-  /**
-   * Expand actions so repeat becomes copies of the previous non-repeat action.
-   * Example:
-   *  [goto, move, repeat(30)]
-   *  -> [goto, move, move, move, ..., move] (30 extra moves)
-   */
   const expandActionsForRuntime = (actions) => {
     const out = [];
 
@@ -154,21 +139,27 @@ export default function PreviewArea({
       const action = actions[i];
 
       if (action.type === "repeat") {
-        const prev = actions[i - 1];
-        if (!prev || prev.type === "repeat") {
-          // Invalid repeat; skip
-          continue;
-        }
-
         const times = Number(
-          action.times ??
-            action.count ??
-            action.value ??
-            0
+          action.times ?? action.count ?? action.value ?? 0
         );
 
-        for (let t = 0; t < times; t++) {
-          out.push({ ...prev });
+        if (action.children && action.children.length > 0) {
+          for (let t = 0; t < times; t++) {
+            for (const child of action.children) {
+              if (child.type === "repeat") {
+                continue;
+              }
+              out.push({ ...child });
+            }
+          }
+        } else {
+          const prev = actions[i - 1];
+          if (!prev || prev.type === "repeat") {
+            continue;
+          }
+          for (let t = 0; t < times; t++) {
+            out.push({ ...prev });
+          }
         }
       } else {
         out.push(action);
@@ -178,10 +169,6 @@ export default function PreviewArea({
     return out;
   };
 
-  /**
-   * Check collisions for a given sprite against all others.
-   * On first collision between a pair, swap their runtime action arrays.
-   */
   const checkAndHandleCollisions = (currentSpriteId) => {
     const currentState = spriteStatesRef.current[currentSpriteId];
     if (!currentState) return;
@@ -199,20 +186,26 @@ export default function PreviewArea({
 
       swappedPairsRef.current.add(key);
 
-      // Swap the runtime action lists of the two sprites
       const temp = runtimeActionsRef.current[currentSpriteId];
       runtimeActionsRef.current[currentSpriteId] =
         runtimeActionsRef.current[otherId];
       runtimeActionsRef.current[otherId] = temp;
 
-      // Optional debug:
-      // console.log(`Swapped actions between ${currentState.name} and ${otherState.name}`);
+      const spriteA = sprites.find((s) => s.id === currentSpriteId);
+      const spriteB = sprites.find((s) => s.id === otherId);
+      if (!spriteA || !spriteB) return;
+
+      const actionsA = spriteA.actions || [];
+      const actionsB = spriteB.actions || [];
+
+      const clonedA = JSON.parse(JSON.stringify(actionsA));
+      const clonedB = JSON.parse(JSON.stringify(actionsB));
+
+      updateSpriteActions(spriteA.id, clonedB);
+      updateSpriteActions(spriteB.id, clonedA);
     });
   };
 
-  /**
-   * Execute all actions for a sprite, sequentially.
-   */
   const executeActions = async (sprite) => {
     let localSpriteState = {
       id: sprite.id,
@@ -227,7 +220,7 @@ export default function PreviewArea({
 
     spriteStatesRef.current[sprite.id] = { ...localSpriteState };
 
-    await sleep(10); // small sync delay so all sprites register
+    await sleep(10);
 
     let index = 0;
 
@@ -237,14 +230,6 @@ export default function PreviewArea({
 
       const action = actions[index];
 
-      // Optional logging:
-      // console.log(
-      //   `[${sprite.name}] BEFORE #${index}`,
-      //   { x: localSpriteState.x, y: localSpriteState.y, rotation: localSpriteState.rotation },
-      //   "action:",
-      //   action
-      // );
-
       localSpriteState = await executeActionWithState(
         localSpriteState,
         action
@@ -253,12 +238,6 @@ export default function PreviewArea({
       spriteStatesRef.current[sprite.id] = { ...localSpriteState };
       checkAndHandleCollisions(sprite.id);
 
-      // Optional logging:
-      // console.log(
-      //   `[${sprite.name}] AFTER #${index}`,
-      //   { x: localSpriteState.x, y: localSpriteState.y, rotation: localSpriteState.rotation }
-      // );
-
       index++;
     }
 
@@ -266,9 +245,6 @@ export default function PreviewArea({
     delete spriteStatesRef.current[sprite.id];
   };
 
-  /**
-   * Play: expand actions, then run them for each sprite.
-   */
   const handlePlay = async () => {
     setIsPlaying(true);
 
@@ -280,8 +256,6 @@ export default function PreviewArea({
       const actions = sprite.actions || [];
       const flat = expandActionsForRuntime(actions);
       runtimeActionsRef.current[sprite.id] = flat;
-      // Optional debug:
-      // console.log(`[${sprite.name}] runtime actions:`, flat);
     });
 
     await sleep(30);
@@ -302,9 +276,6 @@ export default function PreviewArea({
     });
   };
 
-  /**
-   * Stop: cancel all animations and clear messages.
-   */
   const handleStop = () => {
     setIsPlaying(false);
 
@@ -322,7 +293,6 @@ export default function PreviewArea({
 
   return (
     <div className="flex-none w-full h-full overflow-y-auto p-4 flex flex-col">
-      {/* Control Buttons */}
       <div className="flex gap-2 mb-4">
         <button
           onClick={handlePlay}
@@ -360,7 +330,6 @@ export default function PreviewArea({
         </button>
       </div>
 
-      {/* Canvas Area */}
       <div className="flex-1 relative border-2 border-gray-300 rounded-lg overflow-hidden bg-white">
         {sprites.map((sprite) => (
           <CatSprite
@@ -372,7 +341,6 @@ export default function PreviewArea({
         ))}
       </div>
 
-      {/* Sprite List */}
       <div className="mt-4">
         <div className="font-bold mb-2">Sprites:</div>
         <div className="flex flex-wrap gap-2">

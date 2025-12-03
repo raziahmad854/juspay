@@ -21,8 +21,6 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
 
   const addSprite = () => {
-    // This one is user-triggered, so stale state is less dangerous,
-    // but let's still make it safe & clean.
     setSprites((prevSprites) => {
       const newSprite = {
         id: `sprite-${Date.now()}`,
@@ -34,7 +32,6 @@ export default function App() {
         message: "",
         messageTimeout: null,
       };
-      // Also update selected sprite to this new one
       setSelectedSpriteId(newSprite.id);
       return [...prevSprites, newSprite];
     });
@@ -42,7 +39,7 @@ export default function App() {
 
   const deleteSprite = (id) => {
     setSprites((prevSprites) => {
-      if (prevSprites.length === 1) return prevSprites; // Keep at least one sprite
+      if (prevSprites.length === 1) return prevSprites;
 
       const filtered = prevSprites.filter((s) => s.id !== id);
 
@@ -54,7 +51,6 @@ export default function App() {
     });
   };
 
-  // IMPORTANT: functional update, used heavily during animation
   const updateSpriteActions = (spriteId, actions) => {
     setSprites((prevSprites) =>
       prevSprites.map((sprite) =>
@@ -63,7 +59,6 @@ export default function App() {
     );
   };
 
-  // IMPORTANT: functional update, used for move/goto/turn/etc.
   const updateSprite = (spriteId, updates) => {
     setSprites((prevSprites) =>
       prevSprites.map((sprite) =>
@@ -72,7 +67,6 @@ export default function App() {
     );
   };
 
-  // IMPORTANT: also make reset safe
   const resetSprites = () => {
     setSprites((prevSprites) =>
       prevSprites.map((sprite) => ({
@@ -106,6 +100,7 @@ export default function App() {
             addSprite={addSprite}
             deleteSprite={deleteSprite}
             updateSprite={updateSprite}
+            updateSpriteActions={updateSpriteActions}
             isPlaying={isPlaying}
             setIsPlaying={setIsPlaying}
             resetSprites={resetSprites}
